@@ -14,7 +14,9 @@
 package blackfriday
 
 import (
+  "fmt"
 	"bytes"
+  "strings"
 )
 
 // Parse block-level data.
@@ -22,7 +24,7 @@ import (
 // the input buffer ends with a newline.
 func (p *parser) block(out *bytes.Buffer, data []byte) {
 	if len(data) == 0 || data[len(data)-1] != '\n' {
-		panic("block input is missing terminating newline")
+		panic("block input is missing terminating newline\n" + string(data))
 	}
 
 	// this is called recursively: enforce a maximum depth
@@ -49,8 +51,10 @@ func (p *parser) block(out *bytes.Buffer, data []byte) {
 		// <div>
 		//     ...
 		// </div>
-		if data[0] == '<' {
-			if i := p.html(out, data, true); i > 0 {
+    html_trimmed := strings.TrimSpace(string(data))
+		if len(html_trimmed) > 0 && html_trimmed[0] == '<' {
+      var i int
+			if i = p.html(out, data, true); i > 0 {
 				data = data[i:]
 				continue
 			}
@@ -58,10 +62,6 @@ func (p *parser) block(out *bytes.Buffer, data []byte) {
 
 		// blank lines.  note: returns the # of bytes to skip
 		if i := p.isEmpty(data); i > 0 {
-			data = data[i:]
-			continue
-		}
-
 		// indented code block:
 		//
 		//     func max(a, b int) int {
@@ -74,6 +74,10 @@ func (p *parser) block(out *bytes.Buffer, data []byte) {
 			data = data[p.code(out, data):]
 			continue
 		}
+			data = data[i:]
+			continue
+		}
+
 
 		// fenced code block:
 		//
@@ -241,6 +245,11 @@ func (p *parser) isUnderlinedHeader(data []byte) int {
 func (p *parser) html(out *bytes.Buffer, data []byte, doRender bool) int {
 	var i, j int
 
+  // trime any space
+  space_count := strings.Index(string(data), "<")
+  if space_count < 0 { space_count = 0 }
+  data = data[space_count:]
+
 	// identify the opening tag
 	if data[0] != '<' {
 		return 0
@@ -251,49 +260,34 @@ func (p *parser) html(out *bytes.Buffer, data []byte, doRender bool) int {
 	if !tagfound {
 		// check for an HTML comment
 		if size := p.htmlComment(out, data, doRender); size > 0 {
-			return size
+			return size + space_count
 		}
 
 		// check for an <hr> tag
 		if size := p.htmlHr(out, data, doRender); size > 0 {
-			return size
+			return size + space_count
 		}
 
 		// no special case recognized
 		return 0
 	}
 
+
+  close_index := strings.Index(string(data[1:]), ">") + 1
+  if (strings.TrimSpace(curtag) == "div") {
+    fmt.Printf("Before ['%s'] %+v:\n%s\n\n", strings.TrimSpace(curtag), strings.TrimSpace(curtag) == "div", string(data[:close_index]))
+    out.Write(data[:close_index + 1])
+    if close_index < len(data) {
+      //fmt.Println("Within:\n", string(data[close_index + space_count:i]))
+      //p.block(out, data[close_index + space_count:])
+      return (close_index + space_count + 1)
+    }
+  }
+
+
 	// look for an unindented matching closing tag
 	// followed by a blank line
 	found := false
-	/*
-		closetag := []byte("\n</" + curtag + ">")
-		j = len(curtag) + 1
-		for !found {
-			// scan for a closing tag at the beginning of a line
-			if skip := bytes.Index(data[j:], closetag); skip >= 0 {
-				j += skip + len(closetag)
-			} else {
-				break
-			}
-
-			// see if it is the only thing on the line
-			if skip := p.isEmpty(data[j:]); skip > 0 {
-				// see if it is followed by a blank line/eof
-				j += skip
-				if j >= len(data) {
-					found = true
-					i = j
-				} else {
-					if skip := p.isEmpty(data[j:]); skip > 0 {
-						j += skip
-						found = true
-						i = j
-					}
-				}
-			}
-		}
-	*/
 
 	// if not found, try a second pass looking for indented match
 	// but not if tag is "ins" or "del" (following original Markdown.pl)
@@ -325,15 +319,16 @@ func (p *parser) html(out *bytes.Buffer, data []byte, doRender bool) int {
 
 	// the end of the block has been found
 	if doRender {
-		// trim newlines
-		end := i
-		for end > 0 && data[end-1] == '\n' {
-			end--
-		}
-		p.r.BlockHtml(out, data[:end])
+    // trim newlines
+	  end := i
+	  for end > 0 && data[end - 1] == '\n' {
+      end--
+	  }
+
+	  p.r.BlockHtml(out, data[:end])
 	}
 
-	return i
+	return i + space_count
 }
 
 // HTML comment, lax form
